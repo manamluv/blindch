@@ -1,22 +1,9 @@
 (() => {
   'use strict';
 
-  /*
-   * ZETA Creator Private Saver
-   *
-   * 제작자 페이지
-   * → 모든 캐릭터 수집
-   * → 캐릭터 프로필 진입
-   * → 기존 1.5.1 방식으로 N회 비캐 생성
-   * → 제작자 페이지 복귀
-   * → 다음 캐릭터
-   */
-
-  const APP_KEY =
-    '__ZETA_CREATOR_PRIVATE_SAVER_V3__';
-
-  const PANEL_ID =
-    '__zeta_creator_private_saver_panel_v3__';
+  const APP_KEY = '__ZETA_CREATOR_SELECT_PRIVATE_SAVER_V1__';
+  const PANEL_ID = '__zeta_creator_select_private_saver_panel__';
+  const SELECT_CLASS = '__zeta_private_select_button__';
 
   const CARD_SELECTOR =
     '[data-sentry-component="FrameProfileCard"]';
@@ -24,48 +11,59 @@
   const PROFILE_LINK_SELECTOR =
     'a[href*="/plots/"][href*="/profile"]';
 
-  /* =========================================================
-   * 중복 실행 방지
-   * ======================================================= */
+  /* ========================================================
+   * 중복 실행
+   * ====================================================== */
 
-  const oldState = window[APP_KEY];
+  const previous = window[APP_KEY];
 
-  if (oldState?.running) {
-    oldState.stop?.();
+  if (previous?.running) {
+    previous.stop?.();
     return;
   }
 
-  if (oldState) {
-    delete window[APP_KEY];
-  }
+  document.getElementById(PANEL_ID)?.remove();
 
-  /* =========================================================
+  document
+    .querySelectorAll(`.${SELECT_CLASS}`)
+    .forEach((el) => el.remove());
+
+  /* ========================================================
    * 기본 함수
-   * ======================================================= */
+   * ====================================================== */
 
   const sleep = (ms) =>
-    new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    });
+    new Promise((resolve) => setTimeout(resolve, ms));
 
   const normalize = (value) =>
     String(value || '')
       .replace(/\s+/g, ' ')
       .trim();
 
-  const visible = (element) => {
-    if (
-      !element ||
-      !element.isConnected
-    ) {
-      return false;
+  const normalizePath = (value) =>
+    (value || '').replace(/\/+$/, '');
+
+  const currentPath = () =>
+    normalizePath(location.pathname);
+
+  const routeKey = () =>
+    `${location.pathname}${location.search}${location.hash}`;
+
+  const pathOf = (url) => {
+    try {
+      return normalizePath(
+        new URL(url, location.origin).pathname
+      );
+    } catch (_) {
+      return '';
     }
+  };
 
-    const rect =
-      element.getBoundingClientRect();
+  const visible = (element) => {
+    if (!element || !element.isConnected) return false;
 
-    const style =
-      getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
 
     return (
       rect.width > 0 &&
@@ -75,57 +73,24 @@
     );
   };
 
-  const pathOf = (url) => {
-    try {
-      return new URL(
-        url,
-        location.origin
-      ).pathname.replace(/\/+$/, '');
-    } catch (_) {
-      return '';
-    }
-  };
-
-  const currentPath = () =>
-    location.pathname.replace(
-      /\/+$/,
-      ''
-    );
-
-  const routeKey = () =>
-    `${location.pathname}${location.search}${location.hash}`;
-
-  const isProfilePath = (path) =>
-    /\/plots\/[^/]+\/profile$/.test(
-      path || ''
-    );
-
-  /* =========================================================
+  /* ========================================================
    * 상태
-   * ======================================================= */
+   * ====================================================== */
 
   const state = {
     running: true,
+    mode: 'select',
 
-    creatorUrl:
-      location.href,
+    creatorUrl: location.href,
+    creatorPath: currentPath(),
 
-    creatorPath:
-      currentPath(),
+    selected: new Map(),
 
     repeat: 0,
-
-    characters: [],
-
     total: 0,
-
     done: 0,
 
-    success: 0,
-
-    currentCharacter: 0,
-
-    currentRepeat: 0,
+    observer: null,
 
     stop: null
   };
@@ -138,25 +103,18 @@
     }
   };
 
-  /* =========================================================
-   * 패널
-   * ======================================================= */
+  /* ========================================================
+   * UI
+   * ====================================================== */
 
-  document
-    .getElementById(PANEL_ID)
-    ?.remove();
-
-  const host =
-    document.createElement('div');
-
+  const host = document.createElement('div');
   host.id = PANEL_ID;
 
   document.body.appendChild(host);
 
-  const shadow =
-    host.attachShadow({
-      mode: 'open'
-    });
+  const shadow = host.attachShadow({
+    mode: 'open'
+  });
 
   shadow.innerHTML = `
     <style>
@@ -164,7 +122,7 @@
         all: initial;
       }
 
-      * {
+      *, *::before, *::after {
         box-sizing: border-box;
       }
 
@@ -174,14 +132,14 @@
         bottom: 18px;
         z-index: 2147483647;
 
-        width: 275px;
+        width: min(280px, calc(100vw - 28px));
         padding: 14px;
 
         border: 1px solid rgba(255,255,255,.13);
         border-radius: 15px;
 
         background: rgba(25,24,30,.97);
-        color: #fff;
+        color: white;
 
         box-shadow:
           0 12px 35px rgba(0,0,0,.4);
@@ -205,16 +163,28 @@
         font-weight: 700;
       }
 
+      .status {
+        min-height: 38px;
+        margin-top: 9px;
+
+        color: #cbc8d2;
+
+        font-size: 11px;
+        line-height: 1.55;
+
+        word-break: keep-all;
+      }
+
       .bar {
+        display: none;
+
         height: 6px;
         margin-top: 10px;
 
         overflow: hidden;
-
-        background:
-          rgba(255,255,255,.1);
-
         border-radius: 999px;
+
+        background: rgba(255,255,255,.1);
       }
 
       .fill {
@@ -226,27 +196,21 @@
 
         background: #9688f6;
 
-        transition:
-          transform .2s ease;
+        transition: transform .2s ease;
       }
 
-      .status {
-        min-height: 42px;
+      .buttons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px;
+
         margin-top: 10px;
-
-        color: #cbc8d2;
-
-        font-size: 11px;
-        line-height: 1.55;
-
-        word-break: keep-all;
       }
 
       button {
-        width: 100%;
-        height: 34px;
+        min-height: 34px;
 
-        margin-top: 10px;
+        padding: 7px 8px;
 
         border: 0;
         border-radius: 9px;
@@ -261,18 +225,36 @@
       }
 
       button:hover {
-        background: #484752;
+        background: #494852;
+      }
+
+      .start {
+        grid-column: 1 / -1;
+        background: #7667e8;
+      }
+
+      .start:hover {
+        background: #8274ef;
+      }
+
+      .stop {
+        grid-column: 1 / -1;
+      }
+
+      button:disabled {
+        opacity: .45;
+        cursor: default;
       }
     </style>
 
     <div class="panel">
 
       <div class="title">
-        제작자 비캐 일괄 저장기
+        선택 비캐 저장기
       </div>
 
       <div class="count">
-        준비 중
+        선택됨 0명
       </div>
 
       <div class="bar">
@@ -280,140 +262,413 @@
       </div>
 
       <div class="status">
-        제작자 페이지 확인 중...
+        저장할 캐릭터의 체크 버튼을 눌러주세요.
+        아래로 스크롤하면 새 카드에도 체크 버튼이 생깁니다.
       </div>
 
-      <button class="stop">
-        중지
-      </button>
+      <div class="buttons">
+
+        <button class="select-visible">
+          현재 화면 전체 선택
+        </button>
+
+        <button class="clear">
+          선택 해제
+        </button>
+
+        <button class="start">
+          선택한 캐릭터 저장
+        </button>
+
+        <button class="stop">
+          닫기
+        </button>
+
+      </div>
 
     </div>
   `;
 
   const countEl =
-    shadow.querySelector(
-      '.count'
-    );
+    shadow.querySelector('.count');
 
   const statusEl =
-    shadow.querySelector(
-      '.status'
-    );
+    shadow.querySelector('.status');
+
+  const barEl =
+    shadow.querySelector('.bar');
 
   const fillEl =
-    shadow.querySelector(
-      '.fill'
-    );
+    shadow.querySelector('.fill');
+
+  const selectVisibleButton =
+    shadow.querySelector('.select-visible');
+
+  const clearButton =
+    shadow.querySelector('.clear');
+
+  const startButton =
+    shadow.querySelector('.start');
 
   const stopButton =
-    shadow.querySelector(
-      '.stop'
-    );
+    shadow.querySelector('.stop');
 
   const paint = (message) => {
-    statusEl.textContent =
-      message;
+    statusEl.textContent = message;
 
-    if (state.total > 0) {
+    if (state.mode === 'select') {
+      countEl.textContent =
+        `선택됨 ${state.selected.size}명`;
+    } else {
       countEl.textContent =
         `${state.done} / ${state.total}`;
 
-      fillEl.style.transform =
-        `scaleX(${Math.min(
-          state.done /
-            state.total,
-          1
-        )})`;
+      if (state.total > 0) {
+        fillEl.style.transform =
+          `scaleX(${Math.min(
+            state.done / state.total,
+            1
+          )})`;
+      }
     }
   };
 
-  const finish = (message) => {
-    state.running = false;
+  const refreshSelectionUI = () => {
+    if (state.mode !== 'select') return;
 
-    statusEl.textContent =
-      message;
+    countEl.textContent =
+      `선택됨 ${state.selected.size}명`;
 
-    stopButton.textContent =
-      '닫기';
+    startButton.disabled =
+      state.selected.size === 0;
 
-    if (state.total > 0) {
-      countEl.textContent =
-        `${state.done} / ${state.total}`;
+    document
+      .querySelectorAll(`.${SELECT_CLASS}`)
+      .forEach((button) => {
+        const path = button.dataset.profilePath;
 
-      fillEl.style.transform =
-        `scaleX(${Math.min(
-          state.done /
-            state.total,
-          1
-        )})`;
+        const selected =
+          state.selected.has(path);
+
+        button.dataset.selected =
+          String(selected);
+
+        button.textContent =
+          selected ? '✓' : '';
+      });
+  };
+
+  /* ========================================================
+   * 카드 정보
+   * ====================================================== */
+
+  const characterFromCard = (card) => {
+    const links = [
+      ...card.querySelectorAll(PROFILE_LINK_SELECTOR)
+    ];
+
+    const link = links.find((a) =>
+      /\/plots\/[^/]+\/profile$/.test(
+        pathOf(a.href)
+      )
+    );
+
+    if (!link) return null;
+
+    const titleNode =
+      card.querySelector('span[title]');
+
+    let name =
+      normalize(
+        titleNode?.getAttribute('title')
+      );
+
+    if (!name) {
+      const image = card.querySelector('img[alt]');
+
+      const alt =
+        normalize(image?.getAttribute('alt'));
+
+      if (alt) {
+        name = alt.replace(
+          /^.+?의\s+/,
+          ''
+        );
+      }
     }
+
+    if (!name) {
+      name =
+        normalize(card.innerText)
+          .split('\n')[0] ||
+        '이름 없는 캐릭터';
+    }
+
+    return {
+      name,
+      url: new URL(
+        link.href,
+        location.origin
+      ).href,
+      path: pathOf(link.href)
+    };
   };
 
-  state.stop = () => {
-    state.running = false;
-  };
+  /* ========================================================
+   * 카드 체크 버튼
+   * ====================================================== */
 
-  stopButton.onclick = () => {
-    if (state.running) {
-      state.running = false;
-
-      statusEl.textContent =
-        '중지하는 중...';
-
-      stopButton.textContent =
-        '닫기';
-
+  const addSelectionButton = (card) => {
+    if (
+      card.querySelector(`.${SELECT_CLASS}`)
+    ) {
       return;
     }
 
-    host.remove();
+    const character =
+      characterFromCard(card);
+
+    if (!character) return;
+
+    const style =
+      getComputedStyle(card);
+
+    if (style.position === 'static') {
+      card.style.position = 'relative';
+    }
+
+    const button =
+      document.createElement('button');
+
+    button.className =
+      SELECT_CLASS;
+
+    button.type = 'button';
+
+    button.dataset.profilePath =
+      character.path;
+
+    button.title =
+      `${character.name} 선택`;
+
+    Object.assign(
+      button.style,
+      {
+        position: 'absolute',
+        top: '7px',
+        right: '7px',
+
+        zIndex: '2147483000',
+
+        width: '26px',
+        height: '26px',
+
+        minWidth: '26px',
+        minHeight: '26px',
+
+        margin: '0',
+        padding: '0',
+
+        display: 'grid',
+        placeItems: 'center',
+
+        border:
+          '2px solid rgba(255,255,255,.95)',
+
+        borderRadius: '7px',
+
+        background:
+          state.selected.has(character.path)
+            ? '#7667e8'
+            : 'rgba(20,20,24,.72)',
+
+        color: '#fff',
+
+        boxShadow:
+          '0 2px 8px rgba(0,0,0,.35)',
+
+        fontSize: '17px',
+        fontWeight: '900',
+
+        lineHeight: '1',
+
+        cursor: 'pointer',
+
+        userSelect: 'none',
+
+        WebkitTapHighlightColor:
+          'transparent'
+      }
+    );
 
     if (
-      window[APP_KEY] === state
+      state.selected.has(
+        character.path
+      )
     ) {
-      delete window[APP_KEY];
+      button.textContent = '✓';
+      button.dataset.selected = 'true';
+    } else {
+      button.textContent = '';
+      button.dataset.selected = 'false';
     }
+
+    button.addEventListener(
+      'click',
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (
+          typeof event.stopImmediatePropagation ===
+          'function'
+        ) {
+          event.stopImmediatePropagation();
+        }
+
+        if (state.mode !== 'select') {
+          return;
+        }
+
+        if (
+          state.selected.has(
+            character.path
+          )
+        ) {
+          state.selected.delete(
+            character.path
+          );
+        } else {
+          state.selected.set(
+            character.path,
+            character
+          );
+        }
+
+        const selected =
+          state.selected.has(
+            character.path
+          );
+
+        button.textContent =
+          selected ? '✓' : '';
+
+        button.dataset.selected =
+          String(selected);
+
+        button.style.background =
+          selected
+            ? '#7667e8'
+            : 'rgba(20,20,24,.72)';
+
+        refreshSelectionUI();
+      },
+
+      true
+    );
+
+    card.appendChild(button);
   };
 
-  /* =========================================================
-   * waitFor
-   * ======================================================= */
+  const decorateCards = () => {
+    if (state.mode !== 'select') return;
 
-  const waitFor = async (
-    finder,
-    label,
-    timeout = 20000,
-    interval = 150
-  ) => {
-    const started =
-      Date.now();
+    document
+      .querySelectorAll(CARD_SELECTOR)
+      .forEach(addSelectionButton);
 
-    while (
-      Date.now() - started <
-      timeout
-    ) {
-      abort();
+    refreshSelectionUI();
+  };
 
-      try {
-        const result =
-          finder();
+  /*
+   * 스크롤해서 새로운 카드가 DOM에 생겨도
+   * 자동으로 체크 버튼을 붙인다.
+   */
 
-        if (result) {
-          return result;
-        }
-      } catch (_) {}
+  state.observer =
+    new MutationObserver(() => {
+      if (state.mode !== 'select') return;
 
-      await sleep(interval);
+      requestAnimationFrame(
+        decorateCards
+      );
+    });
+
+  state.observer.observe(
+    document.documentElement,
+    {
+      childList: true,
+      subtree: true
+    }
+  );
+
+  decorateCards();
+
+  /* ========================================================
+   * 전체 선택 / 해제
+   * ====================================================== */
+
+  selectVisibleButton.onclick = () => {
+    if (state.mode !== 'select') return;
+
+    const cards =
+      document.querySelectorAll(
+        CARD_SELECTOR
+      );
+
+    let added = 0;
+
+    for (const card of cards) {
+      const character =
+        characterFromCard(card);
+
+      if (!character) continue;
+
+      if (
+        !state.selected.has(
+          character.path
+        )
+      ) {
+        state.selected.set(
+          character.path,
+          character
+        );
+
+        added += 1;
+      }
     }
 
-    throw new Error(
-      `${label} 대기 시간 초과`
+    refreshSelectionUI();
+
+    paint(
+      `${added}명 추가 선택 · 총 ${state.selected.size}명`
     );
   };
 
-  /* =========================================================
-   * 원본 1.5.1 방식 클릭
-   * ======================================================= */
+  clearButton.onclick = () => {
+    if (state.mode !== 'select') return;
+
+    state.selected.clear();
+
+    document
+      .querySelectorAll(`.${SELECT_CLASS}`)
+      .forEach((button) => {
+        button.textContent = '';
+        button.dataset.selected = 'false';
+        button.style.background =
+          'rgba(20,20,24,.72)';
+      });
+
+    refreshSelectionUI();
+
+    paint(
+      '선택을 모두 해제했습니다.'
+    );
+  };
+
+  /* ========================================================
+   * 원본 1.5.1 클릭
+   * ====================================================== */
 
   const click = async (
     element,
@@ -492,11 +747,8 @@
           'pointerdown',
           {
             ...eventOptions,
-
             pointerId: 1,
-            pointerType:
-              'mouse',
-
+            pointerType: 'mouse',
             isPrimary: true,
             buttons: 1
           }
@@ -523,11 +775,8 @@
           'pointerup',
           {
             ...eventOptions,
-
             pointerId: 1,
-            pointerType:
-              'mouse',
-
+            pointerType: 'mouse',
             isPrimary: true,
             buttons: 0
           }
@@ -550,9 +799,42 @@
     await sleep(120);
   };
 
-  /* =========================================================
-   * 원본 1.5.1 프로필 버튼 탐색
-   * ======================================================= */
+  /* ========================================================
+   * waitFor
+   * ====================================================== */
+
+  const waitFor = async (
+    finder,
+    label,
+    timeout = 20000,
+    interval = 150
+  ) => {
+    const end =
+      Date.now() + timeout;
+
+    while (Date.now() < end) {
+      abort();
+
+      try {
+        const result = finder();
+
+        if (result) {
+          return result;
+        }
+      } catch (_) {}
+
+      await sleep(interval);
+    }
+
+    throw new Error(
+      `${label} 대기 시간 초과`
+    );
+  };
+
+  /* ========================================================
+   * 프로필 메뉴
+   * 원본 1.5.1 방식
+   * ====================================================== */
 
   const exactButton = (
     wanted,
@@ -568,7 +850,7 @@
         !element.disabled &&
         normalize(
           element.innerText ||
-            element.textContent
+          element.textContent
         ) === wanted
     ) || null;
 
@@ -598,10 +880,6 @@
       .replace(/[\s,]/g, '')
       .toLowerCase();
 
-  /*
-   * 원본 1.5.1에서 사용하던
-   * 세로 점 3개 SVG 판정 그대로.
-   */
   const hasVerticalDotsIcon =
     (button) =>
       [
@@ -625,50 +903,42 @@
         );
       });
 
-  const profileMenuButton =
-    () => {
-      const candidates = [
-        ...document.querySelectorAll(
-          'button'
-        )
-      ].filter(
-        (button) =>
-          visible(button) &&
-          !button.disabled &&
-          !button.closest(
-            '[role="dialog"], [role="menu"]'
-          ) &&
-          hasVerticalDotsIcon(
-            button
-          )
-      );
+  const profileMenuButton = () => {
+    const candidates = [
+      ...document.querySelectorAll(
+        'button'
+      )
+    ].filter(
+      (button) =>
+        visible(button) &&
+        !button.disabled &&
+        !button.closest(
+          '[role="dialog"], [role="menu"]'
+        ) &&
+        hasVerticalDotsIcon(button)
+    );
 
-      candidates.sort(
-        (left, right) => {
-          const leftRect =
-            left.getBoundingClientRect();
+    candidates.sort(
+      (left, right) => {
+        const a =
+          left.getBoundingClientRect();
 
-          const rightRect =
-            right.getBoundingClientRect();
+        const b =
+          right.getBoundingClientRect();
 
-          return (
-            leftRect.top -
-              rightRect.top ||
-            rightRect.right -
-              leftRect.right
-          );
-        }
-      );
+        return (
+          a.top - b.top ||
+          b.right - a.right
+        );
+      }
+    );
 
-      return (
-        candidates[0] ||
-        null
-      );
-    };
+    return candidates[0] || null;
+  };
 
-  /* =========================================================
-   * 원본 1.5.1 historyBack
-   * ======================================================= */
+  /* ========================================================
+   * historyBack
+   * ====================================================== */
 
   const historyBack = (
     timeout = 45000
@@ -676,8 +946,6 @@
     new Promise(
       (resolve, reject) => {
         let finished = false;
-        let timer = 0;
-        let poller = 0;
 
         const beforeUrl =
           location.href;
@@ -685,10 +953,11 @@
         const beforeState =
           history.state;
 
+        let timer;
+        let poller;
+
         const complete = () => {
-          if (finished) {
-            return;
-          }
+          if (finished) return;
 
           finished = true;
 
@@ -703,15 +972,13 @@
           resolve();
         };
 
-        const onPopState =
-          () => complete();
+        const onPopState = () =>
+          complete();
 
         addEventListener(
           'popstate',
           onPopState,
-          {
-            once: true
-          }
+          { once: true }
         );
 
         history.back();
@@ -730,13 +997,9 @@
 
         timer =
           setTimeout(() => {
-            if (finished) {
-              return;
-            }
+            if (finished) return;
 
-            clearInterval(
-              poller
-            );
+            clearInterval(poller);
 
             removeEventListener(
               'popstate',
@@ -745,33 +1008,30 @@
 
             reject(
               new Error(
-                '히스토리 뒤로가기 시간 초과'
+                '뒤로가기 시간 초과'
               )
             );
           }, timeout);
       }
     );
 
-  /* =========================================================
-   * 비캐 이동 확인
-   * 원본 1.5.1 로직
-   * ======================================================= */
+  /* ========================================================
+   * 새 비캐 이동 확인
+   * ====================================================== */
 
   const waitForNewRoom =
     async (
       profileRoute,
       jobIndex,
       attempt,
-      timeout = 5000
+      timeout = 6000
     ) => {
       const startedAt =
         Date.now();
 
-      let shownSeconds = -1;
-
       let confirmRetries = 0;
 
-      let nextConfirmRetryAt =
+      let nextConfirmRetry =
         startedAt + 1200;
 
       while (
@@ -789,66 +1049,27 @@
 
         if (
           Date.now() >=
-            nextConfirmRetryAt &&
+            nextConfirmRetry &&
           confirmRetries < 2
         ) {
-          const pendingConfirm =
+          const confirm =
             confirmButton();
 
-          if (pendingConfirm) {
+          if (confirm) {
             confirmRetries += 1;
 
             paint(
-              `${jobIndex}/${state.total} · ` +
-              `남아 있는 전환 버튼 다시 누르기 ` +
-              `${confirmRetries}/2`
+              `${jobIndex}/${state.total} · 전환 재확인`
             );
 
             await click(
-              pendingConfirm,
-              '남아 있는 전환'
+              confirm,
+              '전환'
             );
 
-            nextConfirmRetryAt =
-              Date.now() +
-              1200;
-
-            continue;
+            nextConfirmRetry =
+              Date.now() + 1200;
           }
-        }
-
-        const remainingSeconds =
-          Math.max(
-            1,
-            Math.ceil(
-              (
-                timeout -
-                (
-                  Date.now() -
-                  startedAt
-                )
-              ) /
-                1000
-            )
-          );
-
-        if (
-          remainingSeconds !==
-          shownSeconds
-        ) {
-          shownSeconds =
-            remainingSeconds;
-
-          paint(
-            `${jobIndex}/${state.total} · ` +
-            `새 비공개 방 확인 중 ` +
-            `${remainingSeconds}초` +
-            (
-              attempt > 1
-                ? ` (${attempt}/4차 시도)`
-                : ''
-            )
-          );
         }
 
         await sleep(100);
@@ -859,10 +1080,12 @@
       );
     };
 
-  /* =========================================================
-   * 프로필 메뉴 열기
-   * 원본 1.5.1 방식
-   * ======================================================= */
+  /* ========================================================
+   * 메뉴 열기
+   *
+   * 연속 저장 중 클릭이 한 번 씹혀도
+   * 바로 전체 작업이 죽지 않도록 재시도.
+   * ====================================================== */
 
   const openProfileMenu =
     async (jobIndex) => {
@@ -872,38 +1095,82 @@
         return;
       }
 
-      paint(
-        `${jobIndex}/${state.total} · ` +
-        `프로필 메뉴 열기`
-      );
+      const maxAttempts = 4;
 
-      const menuButton =
-        await waitFor(
-          profileMenuButton,
-          '프로필의 점 3개 메뉴',
-          30000
+      for (
+        let attempt = 1;
+        attempt <= maxAttempts;
+        attempt += 1
+      ) {
+        abort();
+
+        paint(
+          `${jobIndex}/${state.total} · ` +
+          `프로필 메뉴 열기` +
+          (
+            attempt > 1
+              ? ` · 재시도 ${attempt}/${maxAttempts}`
+              : ''
+          )
         );
 
-      await click(
-        menuButton,
-        '프로필의 점 3개 메뉴'
-      );
+        if (attempt > 1) {
+          document.dispatchEvent(
+            new KeyboardEvent(
+              'keydown',
+              {
+                key: 'Escape',
+                code: 'Escape',
+                bubbles: true,
+                cancelable: true
+              }
+            )
+          );
 
-      await waitFor(
-        privateSnapshotButton,
-        '비공개로 전환 메뉴',
-        20000
+          await sleep(700);
+        }
+
+        const menu =
+          await waitFor(
+            profileMenuButton,
+            '프로필의 점 3개 메뉴',
+            15000
+          );
+
+        await click(
+          menu,
+          '프로필의 점 3개 메뉴'
+        );
+
+        const started =
+          Date.now();
+
+        while (
+          Date.now() - started <
+          7000
+        ) {
+          abort();
+
+          if (
+            privateSnapshotButton()
+          ) {
+            return;
+          }
+
+          await sleep(150);
+        }
+
+        await sleep(700);
+      }
+
+      throw new Error(
+        '비공개로 전환 메뉴를 4회 열어봤지만 나타나지 않음'
       );
     };
 
-  /* =========================================================
-   * ★ 핵심
-   *
-   * 원본 1.5.1의 convertAttempt 방식.
-   *
-   * profileUrl만 현재 작업 중인
-   * 캐릭터 프로필 URL로 받음.
-   * ======================================================= */
+  /* ========================================================
+   * 1회 비캐 저장
+   * ====================================================== */
 
   const convertAttempt =
     async (
@@ -915,15 +1182,8 @@
         routeKey();
 
       const anchorId =
-        `${Date.now()}_` +
-        `${jobIndex}_` +
-        `${attempt}`;
+        `${Date.now()}_${jobIndex}_${attempt}`;
 
-      /*
-       * 원본 1.5.1처럼
-       * 같은 프로필 URL에
-       * 히스토리 anchor 생성.
-       */
       history.pushState(
         {
           ...(
@@ -948,8 +1208,7 @@
       );
 
       paint(
-        `${jobIndex}/${state.total} · ` +
-        `비공개로 전환 선택`
+        `${jobIndex}/${state.total} · 비공개로 전환`
       );
 
       await click(
@@ -963,8 +1222,7 @@
       );
 
       paint(
-        `${jobIndex}/${state.total} · ` +
-        `전환 확인`
+        `${jobIndex}/${state.total} · 전환 확인`
       );
 
       await click(
@@ -988,39 +1246,21 @@
           routeKey() ===
           profileRoute
         ) {
-          error.retryNewRoom =
-            true;
-
-          error.anchorId =
-            anchorId;
+          error.retryNewRoom = true;
+          error.anchorId = anchorId;
         }
 
         throw error;
       }
 
-      await sleep(700);
+      await sleep(900);
 
-      /*
-       * 새 비캐
-       * ↓
-       * pushState로 만든 프로필 anchor
-       */
       paint(
-        `${jobIndex}/${state.total} · ` +
-        `저장한 프로필로 복귀`
+        `${jobIndex}/${state.total} · 프로필 복귀`
       );
 
       await historyBack();
 
-      /*
-       * 여기가 앞에서 우리가
-       * 새로 만든 판정과 다른 부분.
-       *
-       * 원본 1.5.1의 조건 그대로:
-       * - URL 동일
-       * - route 동일
-       * - 실제 점 3개 메뉴 존재
-       */
       await waitFor(
         () =>
           location.href ===
@@ -1034,12 +1274,6 @@
         45000
       );
 
-      /*
-       * pushState anchor에
-       * 실제로 도착했다면
-       * 한 번 더 뒤로 가서
-       * 원래 프로필 history entry로 복귀.
-       */
       if (
         history.state
           ?.__zetaSavedProfile ===
@@ -1059,7 +1293,7 @@
         );
       }
 
-      await sleep(700);
+      await sleep(1000);
     };
 
   const convertFromProfile =
@@ -1084,8 +1318,7 @@
           return;
         } catch (error) {
           if (
-            !error
-              ?.retryNewRoom
+            !error?.retryNewRoom
           ) {
             throw error;
           }
@@ -1105,7 +1338,7 @@
                   profileUrl &&
                 profileMenuButton(),
 
-              '재시도 전 저장한 프로필 복귀',
+              '재시도 전 프로필 복귀',
 
               20000
             );
@@ -1122,235 +1355,20 @@
 
           paint(
             `${jobIndex}/${state.total} · ` +
-            `이동 재시도 ` +
-            `(${attempt + 1}/${maxAttempts})`
-          );
-        }
-      }
-    };
-
-  /* =========================================================
-   * 제작자 페이지 캐릭터 수집
-   * ======================================================= */
-
-  const characterFromCard =
-    (card) => {
-      const links = [
-        ...card.querySelectorAll(
-          PROFILE_LINK_SELECTOR
-        )
-      ];
-
-      const link =
-        links.find((element) =>
-          isProfilePath(
-            pathOf(element.href)
-          )
-        );
-
-      if (!link) {
-        return null;
-      }
-
-      const titleElement =
-        card.querySelector(
-          'span[title]'
-        );
-
-      const name =
-        normalize(
-          titleElement
-            ?.getAttribute(
-              'title'
-            )
-        ) ||
-        normalize(
-          card.innerText
-        )
-          .split('\n')[0] ||
-        '이름 없는 캐릭터';
-
-      return {
-        name,
-
-        url:
-          new URL(
-            link.href,
-            location.origin
-          ).href,
-
-        path:
-          pathOf(link.href)
-      };
-    };
-
-  const collectCurrentCards =
-    () => {
-      const found =
-        new Map();
-
-      const cards =
-        document.querySelectorAll(
-          CARD_SELECTOR
-        );
-
-      for (
-        const card of cards
-      ) {
-        const character =
-          characterFromCard(
-            card
+            `저장 재시도 ${attempt + 1}/${maxAttempts}`
           );
 
-        if (!character) {
-          continue;
+          await sleep(1000);
         }
-
-        found.set(
-          character.path,
-          character
-        );
       }
-
-      return found;
     };
 
-  const collectAllCharacters =
-    async () => {
-      const found =
-        new Map();
-
-      let previousCount = -1;
-      let stableCount = 0;
-      let previousHeight = -1;
-      let stableHeight = 0;
-
-      paint(
-        '캐릭터 목록 수집 중...'
-      );
-
-      window.scrollTo({
-        top: 0,
-        behavior: 'instant'
-      });
-
-      await sleep(500);
-
-      for (
-        let round = 0;
-        round < 100;
-        round += 1
-      ) {
-        abort();
-
-        const current =
-          collectCurrentCards();
-
-        for (
-          const [
-            path,
-            character
-          ] of current
-        ) {
-          found.set(
-            path,
-            character
-          );
-        }
-
-        const height =
-          document.documentElement
-            .scrollHeight;
-
-        if (
-          found.size ===
-          previousCount
-        ) {
-          stableCount += 1;
-        } else {
-          stableCount = 0;
-        }
-
-        if (
-          height ===
-          previousHeight
-        ) {
-          stableHeight += 1;
-        } else {
-          stableHeight = 0;
-        }
-
-        previousCount =
-          found.size;
-
-        previousHeight =
-          height;
-
-        paint(
-          `캐릭터 목록 수집 중 · ` +
-          `${found.size}명 발견`
-        );
-
-        const bottom =
-          window.scrollY +
-            window.innerHeight >=
-          document.documentElement
-            .scrollHeight -
-            150;
-
-        if (
-          bottom &&
-          stableCount >= 4 &&
-          stableHeight >= 4
-        ) {
-          break;
-        }
-
-        window.scrollTo({
-          top:
-            document
-              .documentElement
-              .scrollHeight,
-
-          behavior: 'instant'
-        });
-
-        await sleep(850);
-      }
-
-      /*
-       * 마지막 렌더 후 재수집
-       */
-      const last =
-        collectCurrentCards();
-
-      for (
-        const [
-          path,
-          character
-        ] of last
-      ) {
-        found.set(
-          path,
-          character
-        );
-      }
-
-      window.scrollTo({
-        top: 0,
-        behavior: 'instant'
-      });
-
-      await sleep(700);
-
-      return [
-        ...found.values()
-      ];
-    };
-
-  /* =========================================================
-   * 제작자 페이지에서 특정 카드 찾기
-   * ======================================================= */
+  /* ========================================================
+   * 제작자 페이지에서 선택 캐릭터 카드 찾기
+   *
+   * 선택 당시 카드가 DOM에서 사라졌을 수 있으므로
+   * 스크롤하면서 다시 찾는다.
+   * ====================================================== */
 
   const findCharacterLinkNow =
     (character) =>
@@ -1364,26 +1382,127 @@
           character.path
       ) || null;
 
+  const findScrollableAncestors =
+    () => {
+      const results = [];
+
+      const cards =
+        document.querySelectorAll(
+          CARD_SELECTOR
+        );
+
+      const firstCard =
+        cards[0];
+
+      let current =
+        firstCard?.parentElement;
+
+      while (current) {
+        const style =
+          getComputedStyle(current);
+
+        if (
+          /auto|scroll/.test(
+            style.overflowY
+          ) &&
+          current.scrollHeight >
+            current.clientHeight + 50
+        ) {
+          results.push(current);
+        }
+
+        current =
+          current.parentElement;
+      }
+
+      if (
+        document.scrollingElement
+      ) {
+        results.push(
+          document.scrollingElement
+        );
+      }
+
+      return [
+        ...new Set(results)
+      ];
+    };
+
+  const scrollToTop = (
+    scrollers
+  ) => {
+    for (const scroller of scrollers) {
+      if (
+        scroller ===
+        document.scrollingElement
+      ) {
+        window.scrollTo({
+          top: 0,
+          behavior: 'instant'
+        });
+      } else {
+        scroller.scrollTop = 0;
+      }
+    }
+  };
+
+  const scrollFurther = (
+    scrollers
+  ) => {
+    for (const scroller of scrollers) {
+      if (
+        scroller ===
+        document.scrollingElement
+      ) {
+        window.scrollBy({
+          top: Math.max(
+            window.innerHeight * .7,
+            450
+          ),
+          behavior: 'instant'
+        });
+      } else {
+        scroller.scrollTop +=
+          Math.max(
+            scroller.clientHeight * .7,
+            450
+          );
+
+        scroller.dispatchEvent(
+          new Event('scroll', {
+            bubbles: true
+          })
+        );
+      }
+    }
+  };
+
   const findCharacterLink =
     async (character) => {
-      window.scrollTo({
-        top: 0,
-        behavior: 'instant'
-      });
+      let existing =
+        findCharacterLinkNow(
+          character
+        );
 
-      await sleep(400);
+      if (existing) {
+        return existing;
+      }
 
-      let previousHeight = -1;
-      let sameHeight = 0;
+      const scrollers =
+        findScrollableAncestors();
+
+      scrollToTop(scrollers);
+
+      await sleep(700);
 
       for (
         let round = 0;
-        round < 100;
+        round < 150;
         round += 1
       ) {
         abort();
 
-        const existing =
+        existing =
           findCharacterLinkNow(
             character
           );
@@ -1392,92 +1511,40 @@
           return existing;
         }
 
-        const height =
-          document.documentElement
-            .scrollHeight;
+        scrollFurther(
+          scrollers
+        );
 
-        if (
-          height ===
-          previousHeight
-        ) {
-          sameHeight += 1;
-        } else {
-          sameHeight = 0;
-        }
-
-        previousHeight =
-          height;
-
-        window.scrollTo({
-          top:
-            document
-              .documentElement
-              .scrollHeight,
-
-          behavior: 'instant'
-        });
-
-        await sleep(700);
-
-        const found =
-          findCharacterLinkNow(
-            character
-          );
-
-        if (found) {
-          return found;
-        }
-
-        if (
-          sameHeight >= 6
-        ) {
-          break;
-        }
+        await sleep(450);
       }
 
       throw new Error(
-        `${character.name}의 프로필 카드를 찾지 못했습니다.`
+        `${character.name} 카드를 다시 찾지 못했습니다.`
       );
     };
 
-  /* =========================================================
-   * 제작자 → 캐릭터 프로필
-   * ======================================================= */
+  /* ========================================================
+   * 제작자 → 캐릭터
+   * ====================================================== */
 
   const openCharacter =
     async (
       character,
-      characterIndex
+      index,
+      totalCharacters
     ) => {
-      abort();
-
-      if (
-        currentPath() ===
-        character.path
-      ) {
-        return;
-      }
-
-      /*
-       * 반드시 제작자 페이지에서
-       * 실제 카드 링크를 클릭.
-       * location.href 사용하지 않음.
-       */
       await waitFor(
         () =>
           currentPath() ===
-            state.creatorPath &&
-          document.querySelector(
-            CARD_SELECTOR
-          ),
+          state.creatorPath,
 
-        '제작자 페이지 준비',
+        '제작자 페이지',
 
         30000
       );
 
       paint(
-        `[${characterIndex + 1}/${state.characters.length}] ` +
+        `[${index}/${totalCharacters}] ` +
         `${character.name} · 카드 찾는 중`
       );
 
@@ -1487,7 +1554,7 @@
         );
 
       paint(
-        `[${characterIndex + 1}/${state.characters.length}] ` +
+        `[${index}/${totalCharacters}] ` +
         `${character.name} · 프로필 이동`
       );
 
@@ -1502,43 +1569,35 @@
             character.path &&
           profileMenuButton(),
 
-        `${character.name} 프로필 로딩`,
+        `${character.name} 프로필`,
 
         30000
       );
 
-      await sleep(700);
+      await sleep(800);
     };
 
-  /* =========================================================
-   * 캐릭터 프로필 → 제작자 페이지
-   * ======================================================= */
+  /* ========================================================
+   * 프로필 → 제작자
+   * ====================================================== */
 
   const backToCreator =
     async (
       character,
-      characterIndex
+      index,
+      totalCharacters
     ) => {
       paint(
-        `[${characterIndex + 1}/${state.characters.length}] ` +
+        `[${index}/${totalCharacters}] ` +
         `${character.name} · 제작자 페이지 복귀`
       );
 
-      /*
-       * 이제 현재 history entry는
-       * 원본 캐릭터 프로필.
-       *
-       * 비캐 저장 과정에서 만든
-       * anchor는 이미 1.5.1 방식으로
-       * 제거된 상태이므로
-       * 여기서 한 번만 back.
-       */
       await historyBack();
 
       await waitFor(
         () =>
           currentPath() ===
-            state.creatorPath &&
+          state.creatorPath &&
           document.querySelector(
             CARD_SELECTOR
           ),
@@ -1548,40 +1607,56 @@
         45000
       );
 
-      await sleep(700);
+      await sleep(1000);
     };
 
-  /* =========================================================
-   * 실행
-   * ======================================================= */
+  /* ========================================================
+   * 선택 UI 제거
+   * ====================================================== */
 
-  (async () => {
-    try {
-      /*
-       * 제작자 페이지 확인
-       */
-      await waitFor(
-        () =>
-          document.querySelector(
-            CARD_SELECTOR
-          ),
+  const removeSelectionButtons =
+    () => {
+      document
+        .querySelectorAll(
+          `.${SELECT_CLASS}`
+        )
+        .forEach(
+          (button) =>
+            button.remove()
+        );
+    };
 
-        '제작자 캐릭터 카드',
+  /* ========================================================
+   * 저장 시작
+   * ====================================================== */
 
-        15000
-      );
+  startButton.onclick =
+    async () => {
+      if (
+        state.mode !==
+        'select'
+      ) {
+        return;
+      }
+
+      if (
+        state.selected.size ===
+        0
+      ) {
+        alert(
+          '저장할 캐릭터를 먼저 선택해주세요.'
+        );
+
+        return;
+      }
 
       const raw =
         prompt(
-          '각 캐릭터를 몇 번씩 비공개로 저장할까요?\n\n예: 2 → 모든 캐릭터를 각각 2번 저장',
+          `선택한 ${state.selected.size}명의 캐릭터를 각각 몇 번씩 저장할까요?`,
           '2'
         );
 
       if (raw === null) {
-        finish(
-          '취소했습니다.'
-        );
-
         return;
       }
 
@@ -1594,177 +1669,228 @@
         ) ||
         repeat < 1
       ) {
-        throw new Error(
+        alert(
           '1 이상의 정수를 입력해주세요.'
-        );
-      }
-
-      state.repeat =
-        repeat;
-
-      /*
-       * 제작자 캐릭터 전체 수집
-       */
-      state.characters =
-        await collectAllCharacters();
-
-      if (
-        state.characters
-          .length === 0
-      ) {
-        throw new Error(
-          '캐릭터를 찾지 못했습니다.'
-        );
-      }
-
-      state.total =
-        state.characters.length *
-        state.repeat;
-
-      countEl.textContent =
-        `0 / ${state.total}`;
-
-      paint(
-        `${state.characters.length}명 발견 · ` +
-        `각 ${state.repeat}회 · ` +
-        `총 ${state.total}개`
-      );
-
-      await sleep(1200);
-
-      let jobIndex = 0;
-
-      /*
-       * 캐릭터 순회
-       */
-      for (
-        let characterIndex = 0;
-        characterIndex <
-          state.characters.length;
-        characterIndex += 1
-      ) {
-        abort();
-
-        const character =
-          state.characters[
-            characterIndex
-          ];
-
-        state.currentCharacter =
-          characterIndex;
-
-        /*
-         * 제작자 → 프로필
-         *
-         * 같은 캐릭터의 반복 작업은
-         * 프로필에 머문 상태로 연속 실행한다.
-         */
-        await openCharacter(
-          character,
-          characterIndex
-        );
-
-        /*
-         * SPA가 URL의 표현을 조금
-         * 바꿀 수도 있으므로
-         * 실제 현재 URL을 저장.
-         */
-        const profileUrl =
-          location.href;
-
-        for (
-          let repeatIndex = 0;
-          repeatIndex <
-            state.repeat;
-          repeatIndex += 1
-        ) {
-          abort();
-
-          jobIndex += 1;
-
-          state.currentRepeat =
-            repeatIndex;
-
-          paint(
-            `[${characterIndex + 1}/${state.characters.length}] ` +
-            `${character.name} · ` +
-            `${repeatIndex + 1}/${state.repeat}회 시작`
-          );
-
-          /*
-           * 여기부터는 기존 1.5.1의
-           * 검증된 프로필 반복 저장 로직.
-           */
-          await convertFromProfile(
-            jobIndex,
-            profileUrl
-          );
-
-          state.done =
-            jobIndex;
-
-          state.success =
-            jobIndex;
-
-          paint(
-            `[${characterIndex + 1}/${state.characters.length}] ` +
-            `${character.name} · ` +
-            `${repeatIndex + 1}/${state.repeat}회 완료`
-          );
-
-          await sleep(800);
-        }
-
-        /*
-         * 이 캐릭터의 N회가
-         * 모두 끝난 뒤에만
-         * 제작자 페이지로 복귀.
-         *
-         * 예: 2회라면
-         *
-         * 캐릭터 A
-         *   → 저장
-         *   → 프로필
-         *   → 저장
-         *   → 프로필
-         *   → 제작자
-         *
-         * 이렇게 움직인다.
-         */
-        await backToCreator(
-          character,
-          characterIndex
-        );
-      }
-
-      finish(
-        `완료 · ` +
-        `${state.characters.length}명 × ` +
-        `${state.repeat}회 = ` +
-        `${state.success}개`
-      );
-    } catch (error) {
-      if (
-        error?.message ===
-        '__STOP__'
-      ) {
-        finish(
-          `중지됨 · ` +
-          `${state.done}/${state.total}`
         );
 
         return;
       }
 
-      console.error(
-        '[ZETA 제작자 비캐 저장기 V3]',
-        error
+      /*
+       * 선택 순서를 그대로 고정.
+       * 이후 DOM이 바뀌어도 Map에 저장된
+       * 이름/URL/path는 유지됨.
+       */
+
+      const characters = [
+        ...state.selected.values()
+      ];
+
+      state.repeat =
+        repeat;
+
+      state.total =
+        characters.length *
+        repeat;
+
+      state.done = 0;
+
+      state.mode =
+        'running';
+
+      state.observer?.disconnect();
+
+      removeSelectionButtons();
+
+      selectVisibleButton.style.display =
+        'none';
+
+      clearButton.style.display =
+        'none';
+
+      startButton.style.display =
+        'none';
+
+      barEl.style.display =
+        'block';
+
+      stopButton.textContent =
+        '중지';
+
+      paint(
+        `${characters.length}명 × ${repeat}회 · 저장 시작`
       );
 
-      finish(
-        `중단 · ` +
-        `${error?.message || error}`
-      );
+      try {
+        let jobIndex = 0;
+
+        for (
+          let characterIndex = 0;
+          characterIndex <
+            characters.length;
+          characterIndex += 1
+        ) {
+          abort();
+
+          const character =
+            characters[
+              characterIndex
+            ];
+
+          /*
+           * 제작자 페이지
+           * → 선택 캐릭터 프로필
+           */
+
+          await openCharacter(
+            character,
+            characterIndex + 1,
+            characters.length
+          );
+
+          /*
+           * 실제 ZETA가 표시하고 있는
+           * 정확한 현재 URL 사용
+           */
+
+          const profileUrl =
+            location.href;
+
+          /*
+           * 선택한 횟수만큼 같은
+           * 캐릭터에서 연속 저장
+           */
+
+          for (
+            let repeatIndex = 0;
+            repeatIndex < repeat;
+            repeatIndex += 1
+          ) {
+            abort();
+
+            jobIndex += 1;
+
+            paint(
+              `[${characterIndex + 1}/${characters.length}] ` +
+              `${character.name} · ` +
+              `${repeatIndex + 1}/${repeat}회 저장`
+            );
+
+            await convertFromProfile(
+              jobIndex,
+              profileUrl
+            );
+
+            state.done =
+              jobIndex;
+
+            paint(
+              `[${characterIndex + 1}/${characters.length}] ` +
+              `${character.name} · ` +
+              `${repeatIndex + 1}/${repeat}회 완료`
+            );
+
+            /*
+             * 연속 작업 시 UI 반응이
+             * 밀리는 것을 줄이기 위해
+             * 기존보다 조금 여유를 둠.
+             */
+
+            await sleep(1500);
+          }
+
+          /*
+           * 이 캐릭터가 전부 끝났을 때만
+           * 제작자 페이지로 복귀
+           */
+
+          await backToCreator(
+            character,
+            characterIndex + 1,
+            characters.length
+          );
+        }
+
+        state.running = false;
+        state.mode = 'done';
+
+        countEl.textContent =
+          `${state.done} / ${state.total}`;
+
+        fillEl.style.transform =
+          'scaleX(1)';
+
+        statusEl.textContent =
+          `완료 · ${characters.length}명 × ${repeat}회 = ${state.done}개`;
+
+        stopButton.textContent =
+          '닫기';
+
+      } catch (error) {
+        if (
+          error?.message ===
+          '__STOP__'
+        ) {
+          state.mode = 'done';
+
+          statusEl.textContent =
+            `중지됨 · ${state.done}/${state.total}`;
+
+          stopButton.textContent =
+            '닫기';
+
+          return;
+        }
+
+        console.error(
+          '[ZETA 선택 비캐 저장기]',
+          error
+        );
+
+        state.running = false;
+        state.mode = 'done';
+
+        statusEl.textContent =
+          `중단 · ${error?.message || error}`;
+
+        stopButton.textContent =
+          '닫기';
+      }
+    };
+
+  /* ========================================================
+   * 종료
+   * ====================================================== */
+
+  stopButton.onclick = () => {
+    if (
+      state.mode ===
+      'running'
+    ) {
+      state.running = false;
+
+      statusEl.textContent =
+        '중지하는 중...';
+
+      return;
     }
-  })();
+
+    state.running = false;
+
+    state.observer?.disconnect();
+
+    removeSelectionButtons();
+
+    host.remove();
+
+    if (
+      window[APP_KEY] ===
+      state
+    ) {
+      delete window[APP_KEY];
+    }
+  };
+
+  refreshSelectionUI();
+
 })();
