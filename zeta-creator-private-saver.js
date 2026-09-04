@@ -1,25 +1,17 @@
 (() => {
   "use strict";
 
-  const APP_KEY = "__ZETA_CREATOR_PRIVATE_SAVER_V1__";
-  const PANEL_ID = "__zeta_creator_private_saver_panel__";
-
-  /* =========================================================
-   * 이미 실행 중인지 확인
-   * ======================================================= */
+  const APP_KEY = "__ZETA_CREATOR_PRIVATE_SAVER_V2__";
+  const PANEL_ID = "__zeta_creator_private_saver_panel_v2__";
 
   if (window[APP_KEY]?.running) {
     alert("제작자 비캐 저장기가 이미 실행 중입니다.");
     return;
   }
 
-  /* =========================================================
-   * 기본 유틸
-   * ======================================================= */
-
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
+  const text = (value) => (value || "").replace(/\s+/g, " ").trim();
 
   const visible = (el) => {
     if (!el || !el.isConnected) return false;
@@ -35,479 +27,43 @@
     );
   };
 
+  const absoluteUrl = (url) => {
+    try {
+      return new URL(url, location.origin).href;
+    } catch {
+      return "";
+    }
+  };
+
+  const pathnameOf = (url) => {
+    try {
+      return new URL(url, location.origin).pathname.replace(/\/+$/, "");
+    } catch {
+      return "";
+    }
+  };
+
+  const currentPath = () => location.pathname.replace(/\/+$/, "");
+
   const routeKey = () => location.pathname + location.search + location.hash;
 
-  const isProfileUrl = (url) => {
-    try {
-      return /\/plots\/[^/]+\/profile\/?$/.test(
-        new URL(url, location.origin).pathname,
-      );
-    } catch (_) {
-      return false;
-    }
-  };
+  const isProfilePath = (path) =>
+    /\/plots\/[^/]+\/profile$/.test(path.replace(/\/+$/, ""));
 
-  const isProfilePage = () =>
-    /\/plots\/[^/]+\/profile\/?$/.test(location.pathname);
+  const isProfilePage = () => isProfilePath(currentPath());
 
-  const isStopped = () => !state.running;
-
-  const abort = () => {
-    if (isStopped()) {
-      throw new Error("__STOP__");
-    }
-  };
-
-  const waitFor = async (finder, label, timeout = 20000, interval = 250) => {
-    const end = Date.now() + timeout;
-
-    while (Date.now() < end) {
-      abort();
-
-      try {
-        const result = finder();
-        if (result) return result;
-      } catch (_) {}
-
-      await sleep(interval);
-    }
-
-    throw new Error(`${label} 대기 시간 초과`);
-  };
-
-  const clickElement = async (el, label) => {
-    abort();
-
-    if (!el || !el.isConnected) {
-      throw new Error(`${label}을 찾을 수 없습니다.`);
-    }
-
-    try {
-      el.scrollIntoView({
-        block: "center",
-        inline: "center",
-        behavior: "instant",
-      });
-    } catch (_) {
-      el.scrollIntoView({
-        block: "center",
-        inline: "center",
-      });
-    }
-
-    await sleep(300);
-
-    abort();
-
-    if (!visible(el)) {
-      throw new Error(`${label}이 화면에 없습니다.`);
-    }
-
-    el.click();
-
-    await sleep(200);
-  };
-
-  /* =========================================================
-   * 제작자 카드 찾기
-   * ======================================================= */
-
-  const getCharacterCards = () => {
-    return [
-      ...document.querySelectorAll(
-        '[data-sentry-component="FrameProfileCard"]',
-      ),
-    ];
-  };
-
-  const getProfileFromCard = (card) => {
-    const links = [
-      ...card.querySelectorAll('a[href*="/plots/"][href*="/profile"]'),
-    ];
-
-    const link = links.find((a) => isProfileUrl(a.href));
-
-    if (!link) return null;
-
-    const title =
-      card.querySelector("span[title]")?.getAttribute("title") ||
-      card.querySelector(".body1.font-semibold")?.textContent ||
-      "이름 없는 캐릭터";
-
-    return {
-      name: normalize(title),
-      url: new URL(link.href, location.origin).href,
-    };
-  };
-
-  const collectVisibleCharacters = () => {
-    const result = new Map();
-
-    for (const card of getCharacterCards()) {
-      const character = getProfileFromCard(card);
-
-      if (!character) continue;
-
-      result.set(character.url, character);
-    }
-
-    return result;
-  };
-
-  /* =========================================================
-   * 제작자 페이지 전체 스크롤
-   * ======================================================= */
-
-  const collectAllCharacters = async () => {
-    paint("캐릭터 목록 찾는 중...");
-
-    const found = new Map();
-
-    let stableCount = 0;
-    let previousCount = -1;
-    let attempts = 0;
-
-    while (attempts < 80) {
-      abort();
-
-      const current = collectVisibleCharacters();
-
-      for (const [url, data] of current) {
-        found.set(url, data);
-      }
-
-      paint(`캐릭터 수집 중 · ${found.size}명 발견`);
-
-      if (found.size === previousCount) {
-        stableCount += 1;
-      } else {
-        stableCount = 0;
-      }
-
-      previousCount = found.size;
-
-      /*
-       * 같은 개수가 여러 번 반복되고
-       * 페이지 끝에 도달했다면 종료
-       */
-      const nearBottom =
-        window.innerHeight + window.scrollY >=
-        document.documentElement.scrollHeight - 100;
-
-      if (nearBottom && stableCount >= 4) {
-        break;
-      }
-
-      window.scrollTo({
-        top: document.documentElement.scrollHeight,
-        behavior: "instant",
-      });
-
-      await sleep(900);
-
-      attempts += 1;
-    }
-
-    /*
-     * 마지막으로 한 번 더 수집
-     */
-    const last = collectVisibleCharacters();
-
-    for (const [url, data] of last) {
-      found.set(url, data);
-    }
-
-    window.scrollTo({
-      top: 0,
-      behavior: "instant",
-    });
-
-    await sleep(500);
-
-    return [...found.values()];
-  };
-
-  /* =========================================================
-   * 프로필 메뉴
-   * ======================================================= */
-
-  const exactButton = (text) =>
-    [...document.querySelectorAll("button")].find(
-      (button) =>
-        visible(button) &&
-        !button.disabled &&
-        normalize(button.innerText || button.textContent) === text,
-    ) || null;
-
-  const privateSnapshotButton = () => {
-    /*
-     * 기존 제타 비캐 메뉴에서 사용되던 ID
-     */
-    const byId = document.querySelector("#create-private-snapshot");
-
-    if (byId && visible(byId) && !byId.disabled) {
-      return byId;
-    }
-
-    /*
-     * ID가 바뀌었을 경우 텍스트로 보조 탐색
-     */
-    const candidates = [
-      ...document.querySelectorAll('button, [role="menuitem"]'),
-    ];
-
-    return (
-      candidates.find((el) => {
-        if (!visible(el)) return false;
-
-        const text = normalize(el.innerText || el.textContent);
-
-        return text === "비공개로 전환" || text.includes("비공개로 전환");
-      }) || null
-    );
-  };
-
-  const confirmButton = () => exactButton("전환");
-
-  /*
-   * 점 3개 버튼 찾기
-   */
-
-  const profileMenuButton = () => {
-    /*
-     * aria-label이 존재하면 우선 사용
-     */
-    const ariaSelectors = [
-      'button[aria-label="More"]',
-      'button[aria-label="더보기"]',
-      'button[aria-label="More options"]',
-    ];
-
-    for (const selector of ariaSelectors) {
-      const el = document.querySelector(selector);
-
-      if (el && visible(el) && !el.disabled) {
-        return el;
-      }
-    }
-
-    /*
-     * 화면 상단의 SVG 버튼 중 점 3개 형태 추정
-     */
-    const buttons = [...document.querySelectorAll("button")].filter(
-      (button) => {
-        if (!visible(button) || button.disabled) {
-          return false;
-        }
-
-        if (button.closest('[role="dialog"], [role="menu"]')) {
-          return false;
-        }
-
-        const svg = button.querySelector("svg");
-
-        if (!svg) return false;
-
-        const text = normalize(button.innerText || button.textContent);
-
-        /*
-         * 텍스트 버튼은 제외
-         */
-        if (text.length > 2) return false;
-
-        return true;
-      },
-    );
-
-    /*
-     * 오른쪽 위에 있는 버튼을 우선
-     */
-    buttons.sort((a, b) => {
-      const ar = a.getBoundingClientRect();
-      const br = b.getBoundingClientRect();
-
-      return ar.top - br.top || br.right - ar.right;
-    });
-
-    /*
-     * 후보 중 뒤로가기 버튼 등을 피하기 위해
-     * 오른쪽 절반 버튼 우선
-     */
-    const rightSide = buttons.find((button) => {
-      const rect = button.getBoundingClientRect();
-
-      return rect.left > window.innerWidth / 2;
-    });
-
-    return rightSide || null;
-  };
-
-  /* =========================================================
-   * SPA 이동
-   * ======================================================= */
-
-  const navigate = async (url, label = "페이지 이동") => {
-    abort();
-
-    const target = new URL(url, location.origin);
-
-    /*
-     * Next.js SPA 라우팅을 살리기 위해
-     * 실제 링크가 있으면 클릭
-     */
-    const matchingLink = [...document.querySelectorAll("a[href]")].find((a) => {
-      try {
-        return new URL(a.href, location.origin).href === target.href;
-      } catch (_) {
-        return false;
-      }
-    });
-
-    if (matchingLink && visible(matchingLink)) {
-      matchingLink.click();
-    } else {
-      /*
-       * 현재 DOM에 링크가 없으면 location 이동
-       */
-      location.href = target.href;
-    }
-
-    await waitFor(
-      () => location.pathname === target.pathname,
-      label,
-      45000,
-      200,
-    );
-
-    await sleep(800);
-  };
-
-  /* =========================================================
-   * 새 비공개 방 생성
-   * ======================================================= */
-
-  const waitForRoomChange = async (profileRoute, timeout = 12000) => {
-    const end = Date.now() + timeout;
-
-    while (Date.now() < end) {
-      abort();
-
-      if (routeKey() !== profileRoute) {
-        return true;
-      }
-
-      /*
-       * 확인 버튼이 남아 있으면
-       * 한 번 더 누름
-       */
-      const confirm = confirmButton();
-
-      if (confirm) {
-        await clickElement(confirm, "전환 확인");
-
-        await sleep(600);
-      }
-
-      await sleep(200);
-    }
-
-    throw new Error("비공개 방으로 이동하지 않았습니다.");
-  };
-
-  const openProfileMenu = async () => {
-    if (privateSnapshotButton()) {
-      return;
-    }
-
-    const button = await waitFor(
-      profileMenuButton,
-      "프로필 점 3개 메뉴",
-      25000,
-    );
-
-    await clickElement(button, "프로필 점 3개 메뉴");
-
-    await waitFor(privateSnapshotButton, "비공개로 전환 메뉴", 15000);
-  };
-
-  const createPrivateRoom = async (character, characterIndex, repeatIndex) => {
-    abort();
-
-    const prefix =
-      `[${characterIndex + 1}/${state.characters.length}] ` +
-      `${character.name} · ${repeatIndex + 1}/${state.repeat}`;
-
-    /*
-     * 캐릭터 프로필로 이동
-     */
-    if (location.href !== character.url || !isProfilePage()) {
-      paint(`${prefix} · 프로필 이동`);
-
-      await navigate(character.url, "캐릭터 프로필 이동");
-    }
-
-    await waitFor(profileMenuButton, "캐릭터 프로필 로딩", 30000);
-
-    await sleep(500);
-
-    const profileRoute = routeKey();
-
-    paint(`${prefix} · 메뉴 열기`);
-
-    await openProfileMenu();
-
-    paint(`${prefix} · 비공개로 전환`);
-
-    const privateButton = await waitFor(
-      privateSnapshotButton,
-      "비공개로 전환 메뉴",
-      15000,
-    );
-
-    await clickElement(privateButton, "비공개로 전환");
-
-    paint(`${prefix} · 전환 확인`);
-
-    const confirm = await waitFor(confirmButton, "전환 확인창", 15000);
-
-    await clickElement(confirm, "전환");
-
-    paint(`${prefix} · 비공개 방 생성 확인`);
-
-    await waitForRoomChange(profileRoute, 12000);
-
-    await sleep(700);
-
-    /*
-     * 새 비공개 방 → 원본 프로필 복귀
-     *
-     * URL을 직접 이용하므로 history 스택에
-     * 의존하지 않음.
-     */
-    paint(`${prefix} · 프로필 복귀`);
-
-    await navigate(character.url, "원본 캐릭터 프로필 복귀");
-
-    await waitFor(profileMenuButton, "원본 프로필 로딩", 30000);
-
-    await sleep(500);
-  };
-
-  /* =========================================================
+  /* =====================================================
    * UI
-   * ======================================================= */
+   * =================================================== */
 
   document.getElementById(PANEL_ID)?.remove();
 
   const host = document.createElement("div");
-
   host.id = PANEL_ID;
 
   document.body.appendChild(host);
 
-  const shadow = host.attachShadow({
-    mode: "open",
-  });
+  const shadow = host.attachShadow({ mode: "open" });
 
   shadow.innerHTML = `
     <style>
@@ -521,21 +77,20 @@
 
       .panel {
         position: fixed;
-        right: 14px;
+        right: 16px;
         bottom: 18px;
         z-index: 2147483647;
 
-        width: 260px;
-        padding: 14px;
+        width: 280px;
+        padding: 15px;
 
         border: 1px solid rgba(255,255,255,.12);
         border-radius: 16px;
 
-        background: rgba(25,25,31,.96);
+        background: rgba(24,24,29,.97);
         color: white;
 
-        box-shadow:
-          0 12px 35px rgba(0,0,0,.35);
+        box-shadow: 0 12px 35px rgba(0,0,0,.4);
 
         font-family:
           -apple-system,
@@ -545,83 +100,62 @@
       }
 
       .title {
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 800;
       }
 
       .count {
-        margin-top: 6px;
-
-        color: #d9d4ff;
-
+        margin-top: 7px;
+        color: #d8d1ff;
         font-size: 12px;
         font-weight: 700;
       }
 
       .bar {
-        height: 5px;
-
-        margin-top: 11px;
-
+        height: 6px;
+        margin-top: 10px;
         overflow: hidden;
-
         border-radius: 999px;
-
-        background:
-          rgba(255,255,255,.1);
+        background: rgba(255,255,255,.1);
       }
 
       .fill {
         width: 100%;
         height: 100%;
-
         transform: scaleX(0);
         transform-origin: left;
-
         background: #9688f6;
-
-        transition:
-          transform .25s ease;
+        transition: transform .2s ease;
       }
 
       .status {
-        min-height: 36px;
-
+        min-height: 42px;
         margin-top: 10px;
-
-        color: #c5c3cc;
-
+        color: #ccc9d5;
         font-size: 11px;
-        line-height: 1.5;
-
+        line-height: 1.55;
         word-break: keep-all;
       }
 
       button {
         width: 100%;
-        height: 34px;
-
-        margin-top: 9px;
-
+        height: 35px;
+        margin-top: 10px;
         border: 0;
         border-radius: 9px;
-
-        background: #383842;
+        background: #3b3b45;
         color: white;
-
         font-size: 11px;
         font-weight: 700;
-
         cursor: pointer;
       }
 
       button:hover {
-        background: #44444f;
+        background: #484853;
       }
     </style>
 
     <div class="panel">
-
       <div class="title">
         제작자 비캐 일괄 저장기
       </div>
@@ -641,37 +175,27 @@
       <button class="stop">
         중지
       </button>
-
     </div>
   `;
 
   const countEl = shadow.querySelector(".count");
-
   const fillEl = shadow.querySelector(".fill");
-
   const statusEl = shadow.querySelector(".status");
-
   const stopButton = shadow.querySelector(".stop");
-
-  /* =========================================================
-   * 상태
-   * ======================================================= */
 
   const state = {
     running: true,
 
     creatorUrl: location.href,
+    creatorPath: currentPath(),
 
     repeat: 0,
 
     characters: [],
 
-    totalJobs: 0,
-
+    total: 0,
     done: 0,
-
     success: 0,
-
     failed: 0,
 
     failures: [],
@@ -679,42 +203,34 @@
 
   window[APP_KEY] = state;
 
-  const paint = (text) => {
-    statusEl.textContent = text;
+  const paint = (message) => {
+    statusEl.textContent = message;
 
-    if (state.totalJobs > 0) {
-      countEl.textContent = `${state.done} / ${state.totalJobs}`;
+    if (state.total > 0) {
+      countEl.textContent = `${state.done} / ${state.total}`;
 
-      fillEl.style.transform = `scaleX(${Math.min(
-        state.done / state.totalJobs,
-        1,
-      )})`;
+      fillEl.style.transform = `scaleX(${Math.min(state.done / state.total, 1)})`;
     }
   };
 
-  const finish = (text) => {
+  const finish = (message) => {
     state.running = false;
 
-    statusEl.textContent = text;
+    statusEl.textContent = message;
 
     stopButton.textContent = "닫기";
 
-    if (state.totalJobs > 0) {
-      countEl.textContent = `${state.done} / ${state.totalJobs}`;
+    if (state.total > 0) {
+      countEl.textContent = `${state.done} / ${state.total}`;
 
-      fillEl.style.transform = `scaleX(${Math.min(
-        state.done / state.totalJobs,
-        1,
-      )})`;
+      fillEl.style.transform = `scaleX(${Math.min(state.done / state.total, 1)})`;
     }
   };
 
   stopButton.onclick = () => {
     if (state.running) {
       state.running = false;
-
       statusEl.textContent = "중지하는 중...";
-
       stopButton.textContent = "닫기";
     } else {
       host.remove();
@@ -725,30 +241,520 @@
     }
   };
 
-  /* =========================================================
+  const abortCheck = () => {
+    if (!state.running) {
+      throw new Error("__STOP__");
+    }
+  };
+
+  const waitFor = async (finder, label, timeout = 20000, interval = 200) => {
+    const end = Date.now() + timeout;
+
+    while (Date.now() < end) {
+      abortCheck();
+
+      try {
+        const result = finder();
+
+        if (result) {
+          return result;
+        }
+      } catch {}
+
+      await sleep(interval);
+    }
+
+    throw new Error(`${label} 대기 시간 초과`);
+  };
+
+  const waitForPath = async (targetPath, label, timeout = 30000) => {
+    const wanted = targetPath.replace(/\/+$/, "");
+
+    return waitFor(() => currentPath() === wanted, label, timeout, 150);
+  };
+
+  const click = async (el, label) => {
+    abortCheck();
+
+    if (!el || !el.isConnected) {
+      throw new Error(`${label}을 찾지 못했습니다.`);
+    }
+
+    try {
+      el.scrollIntoView({
+        block: "center",
+        inline: "center",
+        behavior: "instant",
+      });
+    } catch {
+      el.scrollIntoView({
+        block: "center",
+        inline: "center",
+      });
+    }
+
+    await sleep(300);
+
+    abortCheck();
+
+    el.click();
+
+    await sleep(250);
+  };
+
+  /* =====================================================
+   * 제작자 페이지 캐릭터 수집
+   * =================================================== */
+
+  const CARD_SELECTOR = '[data-sentry-component="FrameProfileCard"]';
+
+  const PROFILE_LINK_SELECTOR = 'a[href*="/plots/"][href*="/profile"]';
+
+  const characterFromCard = (card) => {
+    const links = [...card.querySelectorAll(PROFILE_LINK_SELECTOR)];
+
+    const link = links.find((a) => isProfilePath(pathnameOf(a.href)));
+
+    if (!link) {
+      return null;
+    }
+
+    const titleNode = card.querySelector("span[title]");
+
+    const name =
+      text(titleNode?.getAttribute("title")) ||
+      text(card.innerText).split("\n")[0] ||
+      "이름 없는 캐릭터";
+
+    return {
+      name,
+      url: absoluteUrl(link.href),
+      path: pathnameOf(link.href),
+    };
+  };
+
+  const collectCurrentCards = () => {
+    const result = new Map();
+
+    const cards = document.querySelectorAll(CARD_SELECTOR);
+
+    for (const card of cards) {
+      const character = characterFromCard(card);
+
+      if (!character) continue;
+
+      result.set(character.path, character);
+    }
+
+    return result;
+  };
+
+  const collectAllCharacters = async () => {
+    const found = new Map();
+
+    let sameCount = 0;
+    let previousCount = -1;
+    let rounds = 0;
+
+    paint("캐릭터 전체 목록 수집 중...");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "instant",
+    });
+
+    await sleep(500);
+
+    while (rounds < 80) {
+      abortCheck();
+
+      const current = collectCurrentCards();
+
+      for (const [path, character] of current) {
+        found.set(path, character);
+      }
+
+      paint(`캐릭터 목록 수집 중 · ${found.size}명 발견`);
+
+      if (found.size === previousCount) {
+        sameCount++;
+      } else {
+        sameCount = 0;
+      }
+
+      previousCount = found.size;
+
+      const bottom =
+        window.scrollY + window.innerHeight >=
+        document.documentElement.scrollHeight - 120;
+
+      if (bottom && sameCount >= 4) {
+        break;
+      }
+
+      window.scrollTo({
+        top: document.documentElement.scrollHeight,
+        behavior: "instant",
+      });
+
+      await sleep(800);
+
+      rounds++;
+    }
+
+    const last = collectCurrentCards();
+
+    for (const [path, character] of last) {
+      found.set(path, character);
+    }
+
+    window.scrollTo({
+      top: 0,
+      behavior: "instant",
+    });
+
+    await sleep(600);
+
+    return [...found.values()];
+  };
+
+  /* =====================================================
+   * 제작자 페이지에서 특정 캐릭터 링크 찾기
+   *
+   * location.href 사용하지 않음.
+   * 실제 카드의 <a>를 찾아 클릭함.
+   * =================================================== */
+
+  const matchingCharacterLink = (character) => {
+    const links = [...document.querySelectorAll(PROFILE_LINK_SELECTOR)];
+
+    return (
+      links.find((link) => pathnameOf(link.href) === character.path) || null
+    );
+  };
+
+  const findCharacterLink = async (character) => {
+    window.scrollTo({
+      top: 0,
+      behavior: "instant",
+    });
+
+    await sleep(400);
+
+    let previousHeight = 0;
+    let stable = 0;
+
+    for (let i = 0; i < 100; i++) {
+      abortCheck();
+
+      const existing = matchingCharacterLink(character);
+
+      if (existing) {
+        return existing;
+      }
+
+      const height = document.documentElement.scrollHeight;
+
+      if (height === previousHeight) {
+        stable++;
+      } else {
+        stable = 0;
+      }
+
+      previousHeight = height;
+
+      window.scrollTo({
+        top: document.documentElement.scrollHeight,
+        behavior: "instant",
+      });
+
+      await sleep(650);
+
+      const afterScroll = matchingCharacterLink(character);
+
+      if (afterScroll) {
+        return afterScroll;
+      }
+
+      if (stable >= 6) {
+        break;
+      }
+    }
+
+    throw new Error(`${character.name} 카드 링크를 찾지 못했습니다.`);
+  };
+
+  const openCharacter = async (character) => {
+    abortCheck();
+
+    if (currentPath() === character.path) {
+      return;
+    }
+
+    if (currentPath() !== state.creatorPath) {
+      throw new Error(
+        "제작자 페이지가 아닌 곳에서 캐릭터 이동을 시도했습니다.",
+      );
+    }
+
+    paint(`${character.name} · 프로필 찾는 중`);
+
+    const link = await findCharacterLink(character);
+
+    paint(`${character.name} · 프로필 이동`);
+
+    await click(link, `${character.name} 프로필`);
+
+    await waitForPath(character.path, `${character.name} 프로필 이동`, 30000);
+
+    await sleep(800);
+  };
+
+  /* =====================================================
+   * 프로필 메뉴 탐색
+   * =================================================== */
+
+  const privateSnapshotButton = () => {
+    const byId = document.querySelector("#create-private-snapshot");
+
+    if (byId && visible(byId) && !byId.disabled) {
+      return byId;
+    }
+
+    const candidates = [
+      ...document.querySelectorAll(
+        'button, [role="menuitem"], [role="button"]',
+      ),
+    ];
+
+    return (
+      candidates.find((el) => {
+        if (!visible(el)) return false;
+
+        const t = text(el.innerText || el.textContent);
+
+        return t === "비공개로 전환" || t.includes("비공개로 전환");
+      }) || null
+    );
+  };
+
+  const exactButton = (wanted) =>
+    [...document.querySelectorAll("button")].find((button) => {
+      if (!visible(button) || button.disabled) {
+        return false;
+      }
+
+      return text(button.innerText || button.textContent) === wanted;
+    }) || null;
+
+  const confirmButton = () => exactButton("전환");
+
+  const menuButton = () => {
+    const ariaCandidates = [
+      'button[aria-label="More"]',
+      'button[aria-label="더보기"]',
+      'button[aria-label="More options"]',
+      'button[aria-label="Open menu"]',
+      'button[aria-label="메뉴"]',
+    ];
+
+    for (const selector of ariaCandidates) {
+      const el = document.querySelector(selector);
+
+      if (el && visible(el) && !el.disabled) {
+        return el;
+      }
+    }
+
+    const buttons = [...document.querySelectorAll("button")].filter(
+      (button) => {
+        if (!visible(button) || button.disabled) {
+          return false;
+        }
+
+        if (button.closest('[role="dialog"], [role="menu"]')) {
+          return false;
+        }
+
+        const rect = button.getBoundingClientRect();
+
+        if (rect.top > 220 || rect.right < window.innerWidth / 2) {
+          return false;
+        }
+
+        return !!button.querySelector("svg");
+      },
+    );
+
+    buttons.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+
+      if (ar.top !== br.top) {
+        return ar.top - br.top;
+      }
+
+      return br.right - ar.right;
+    });
+
+    return buttons[0] || null;
+  };
+
+  const openMenu = async () => {
+    if (privateSnapshotButton()) {
+      return;
+    }
+
+    const button = await waitFor(menuButton, "프로필 메뉴 버튼", 20000);
+
+    await click(button, "프로필 메뉴");
+
+    await waitFor(privateSnapshotButton, "비공개 전환 메뉴", 12000);
+  };
+
+  /* =====================================================
+   * 뒤로가기
+   * =================================================== */
+
+  const backToProfile = async (character, roomRoute) => {
+    abortCheck();
+
+    history.back();
+
+    await waitFor(
+      () => currentPath() === character.path && routeKey() !== roomRoute,
+      "원본 프로필 복귀",
+      30000,
+      150,
+    );
+
+    await sleep(800);
+  };
+
+  const backToCreator = async () => {
+    abortCheck();
+
+    history.back();
+
+    await waitForPath(state.creatorPath, "제작자 페이지 복귀", 30000);
+
+    await waitFor(
+      () => document.querySelector(CARD_SELECTOR),
+      "제작자 캐릭터 카드",
+      20000,
+    );
+
+    await sleep(700);
+  };
+
+  /* =====================================================
+   * 비공개 방 1개 생성
+   * =================================================== */
+
+  const saveOne = async (character, characterIndex, repeatIndex) => {
+    abortCheck();
+
+    const prefix =
+      `[${characterIndex + 1}/${state.characters.length}] ` +
+      `${character.name} · ` +
+      `${repeatIndex + 1}/${state.repeat}`;
+
+    /*
+     * 반드시 제작자 페이지에서
+     * 실제 캐릭터 카드를 클릭
+     */
+    await openCharacter(character);
+
+    await waitFor(
+      () => isProfilePage() && menuButton(),
+      "캐릭터 프로필 로딩",
+      25000,
+    );
+
+    await sleep(500);
+
+    const profileRoute = routeKey();
+
+    paint(`${prefix} · 메뉴 열기`);
+
+    await openMenu();
+
+    const privateButton = await waitFor(
+      privateSnapshotButton,
+      "비공개로 전환",
+      12000,
+    );
+
+    paint(`${prefix} · 비공개로 전환`);
+
+    await click(privateButton, "비공개로 전환");
+
+    const confirm = await waitFor(confirmButton, "전환 확인 버튼", 12000);
+
+    paint(`${prefix} · 전환 확인`);
+
+    await click(confirm, "전환");
+
+    /*
+     * 프로필 URL에서 다른 URL로 바뀌면
+     * 새 비공개 방이 생성된 것으로 판단
+     */
+    await waitFor(
+      () => routeKey() !== profileRoute,
+      "비공개 방 생성",
+      20000,
+      150,
+    );
+
+    const roomRoute = routeKey();
+
+    paint(`${prefix} · 생성 완료`);
+
+    await sleep(800);
+
+    /*
+     * 새 비공개 방
+     * ↓ history.back()
+     * 캐릭터 프로필
+     */
+    paint(`${prefix} · 프로필로 복귀`);
+
+    await backToProfile(character, roomRoute);
+
+    /*
+     * 캐릭터 프로필
+     * ↓ history.back()
+     * 제작자 페이지
+     */
+    paint(`${prefix} · 제작자 페이지로 복귀`);
+
+    await backToCreator();
+
+    await sleep(500);
+  };
+
+  /* =====================================================
    * 실행
-   * ======================================================= */
+   * =================================================== */
 
   (async () => {
     try {
       /*
-       * 제작자 페이지에 카드가 있는지 확인
+       * 제작자 페이지인지 확인
        */
-      const firstCard = await waitFor(
-        () =>
-          document.querySelector('[data-sentry-component="FrameProfileCard"]'),
-        "제작자 캐릭터 목록",
+      await waitFor(
+        () => document.querySelector(CARD_SELECTOR),
+        "제작자 캐릭터 카드",
         15000,
       );
 
-      if (!firstCard) {
-        throw new Error("제작자 페이지에서 실행해주세요.");
-      }
-
       /*
-       * 반복 횟수 입력
+       * 반복 횟수
        */
-      const raw = prompt("각 캐릭터를 몇 번씩 비공개로 저장할까요?", "2");
+      const raw = prompt(
+        "각 캐릭터를 몇 번씩 비공개로 저장할까요?\n\n예: 2 → 모든 캐릭터를 각각 2번 저장",
+        "2",
+      );
 
       if (raw === null) {
         finish("취소했습니다.");
@@ -768,111 +774,86 @@
        */
       state.characters = await collectAllCharacters();
 
-      if (state.characters.length === 0) {
+      if (!state.characters.length) {
         throw new Error("캐릭터를 찾지 못했습니다.");
       }
 
-      state.totalJobs = state.characters.length * state.repeat;
+      state.total = state.characters.length * state.repeat;
 
-      countEl.textContent = `0 / ${state.totalJobs}`;
+      countEl.textContent = `0 / ${state.total}`;
 
       paint(
         `${state.characters.length}명 발견 · ` +
           `각 ${state.repeat}회 · ` +
-          `총 ${state.totalJobs}개`,
+          `총 ${state.total}개`,
       );
 
       await sleep(1200);
 
       /*
-       * 캐릭터 순회
+       * 캐릭터별 반복
        */
       for (
         let characterIndex = 0;
         characterIndex < state.characters.length;
-        characterIndex += 1
+        characterIndex++
       ) {
-        abort();
-
         const character = state.characters[characterIndex];
 
-        /*
-         * 같은 캐릭터를 N회 반복
-         */
-        for (
-          let repeatIndex = 0;
-          repeatIndex < state.repeat;
-          repeatIndex += 1
-        ) {
-          abort();
+        for (let repeatIndex = 0; repeatIndex < state.repeat; repeatIndex++) {
+          abortCheck();
 
           try {
-            await createPrivateRoom(character, characterIndex, repeatIndex);
+            await saveOne(character, characterIndex, repeatIndex);
 
-            state.success += 1;
+            state.success++;
           } catch (error) {
             if (error?.message === "__STOP__") {
               throw error;
             }
 
-            console.error("[ZETA 제작자 비캐 저장기]", character, error);
-
-            state.failed += 1;
+            state.failed++;
 
             state.failures.push({
               character: character.name,
-
               repeat: repeatIndex + 1,
-
-              message: error?.message || String(error),
+              error: error?.message || String(error),
             });
 
+            console.error(
+              "[ZETA 제작자 비캐 저장기]",
+              character.name,
+              repeatIndex + 1,
+              error,
+            );
+
             /*
-             * 한 캐릭터에서 오류가 나도
-             * 전체 작업은 계속 진행
+             * 페이지 위치가 꼬인 상태에서 계속
+             * 자동 클릭하는 것은 위험하므로 중단.
              */
-            try {
-              if (location.href !== character.url) {
-                await navigate(character.url, "오류 후 프로필 복귀");
-              }
-            } catch (_) {}
+            throw new Error(
+              `${character.name} ${repeatIndex + 1}회차 실패: ` +
+                `${error?.message || error}`,
+            );
           }
 
-          state.done += 1;
+          state.done++;
 
           paint(
-            `[${characterIndex + 1}/${state.characters.length}] ` +
-              `${character.name} · ` +
-              `${repeatIndex + 1}/${state.repeat} 완료`,
+            `${character.name} · ` + `${repeatIndex + 1}/${state.repeat} 완료`,
           );
 
-          await sleep(700);
+          await sleep(600);
         }
       }
 
-      /*
-       * 작업이 끝나면 제작자 페이지 복귀
-       */
-      try {
-        paint("작업 완료 · 제작자 페이지로 돌아가는 중");
-
-        await navigate(state.creatorUrl, "제작자 페이지 복귀");
-      } catch (_) {}
-
-      if (state.failed === 0) {
-        finish(
-          `완료 · ${state.characters.length}명 × ` +
-            `${state.repeat}회 = ` +
-            `${state.success}개 생성`,
-        );
-      } else {
-        finish(`완료 · 성공 ${state.success}개 / ` + `실패 ${state.failed}개`);
-
-        console.table(state.failures);
-      }
+      finish(
+        `완료 · ${state.characters.length}명 × ` +
+          `${state.repeat}회 = ${state.success}개`,
+      );
     } catch (error) {
       if (error?.message === "__STOP__") {
-        finish(`중지 · 성공 ${state.success}개 / ` + `실패 ${state.failed}개`);
+        finish(`중지됨 · 성공 ${state.success}개`);
 
         return;
       }
